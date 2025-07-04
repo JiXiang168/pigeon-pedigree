@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>賽鴿血統管理系統</title>
+  <script src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      padding: 20px;
+      background-color: #f4f4f4;
+    }
+    h1 {
+      text-align: center;
+    }
+    form, .pigeon-list, .search-box {
+      background: white;
+      padding: 15px;
+      border-radius: 10px;
+      box-shadow: 0 0 10px rgba(0,0,0,0.1);
+      margin-bottom: 20px;
+    }
+    .pigeon-item {
+      border-bottom: 1px solid #ccc;
+      padding: 10px 0;
+    }
+    img.preview {
+      max-width: 100px;
+      margin-top: 10px;
+    }
+    .edit-button {
+      margin-top: 5px;
+      background-color: #007bff;
+      color: white;
+      border: none;
+      padding: 5px 10px;
+      cursor: pointer;
+      border-radius: 5px;
+      margin-right: 5px;
+    }
+    .chart-container {
+      position: relative;
+      height: 400px;
+      margin-top: 20px;
+    }
+  </style>
+</head>
+<body>
+  <h1>賽鴿血統管理系統</h1>
+
+  <form id="pigeonForm">
+    <label>鴿名：<input type="text" id="name"></label><br><br>
+    <label>鴿號：<input type="text" id="ringNumber" required></label><br><br>
+    <label>性別：
+      <select id="gender">
+        <option value="公">公</option>
+        <option value="母">母</option>
+        <option value="未分">未分</option>
+      </select>
+    </label><br><br>
+    <label>出生年份：
+      <select id="birthDate">
+        <option value="">-- 請選擇年份 --</option>
+        <script>
+          for (let y = 1990; y <= 2040; y++) {
+            document.write(`<option value="${y}">${y}</option>`);
+          }
+        </script>
+      </select>
+    </label><br><br>
+    <label>羽色：
+      <select id="featherColor">
+        <option value="紅">紅</option>
+        <option value="黑斑">黑斑</option>
+        <option value="黑斑白羽">黑斑白羽</option>
+        <option value="斑">斑</option>
+        <option value="斑白羽">斑白羽</option>
+        <option value="雨點">雨點</option>
+        <option value="雨點白羽">雨點白羽</option>
+        <option value="灰">灰</option>
+        <option value="灰白羽">灰白羽</option>
+        <option value="黑灰">黑灰</option>
+        <option value="未知">未知</option>
+      </select>
+    </label><br><br>
+    <label>眼色：
+      <select id="eyeColor">
+        <option value="黃眼">黃眼</option>
+        <option value="西眼">西眼</option>
+        <option value="黑眼">黑眼</option>
+        <option value="不明">不明</option>
+      </select>
+    </label><br><br>
+    <label>血統：<input type="text" id="breed"></label><br><br>
+    <label>父鴿號：<input type="text" id="fatherRing"></label><br><br>
+    <label>母鴿號：<input type="text" id="motherRing"></label><br><br>
+    <label>備註：<input type="text" id="notes"></label><br><br>
+    <label>上傳照片：<input type="file" id="photoInput" accept="image/*"></label><br>
+    <img id="preview" class="preview"><br><br>
+    <button type="submit">儲存</button>
+  </form>
+
+  <button type="button" onclick="exportToExcel()">📥 匯出為 Excel</button>
+
+  <div class="search-box">
+    <label>搜尋關鍵字：<input type="text" id="searchInput" placeholder="輸入鴿名、鴿號、羽色、眼色、血統等"></label>
+  </div>
+
+  <div class="pigeon-list" id="pigeonList"></div>
+
+  <canvas id="pedigreeChart" style="display:none;"></canvas>
+
+  <script>
+    const form = document.getElementById('pigeonForm');
+    const photoInput = document.getElementById('photoInput');
+    const preview = document.getElementById('preview');
+    const pigeonList = document.getElementById('pigeonList');
+    const pedigreeChartCanvas = document.getElementById('pedigreeChart');
+    const searchInput = document.getElementById('searchInput');
+    const ringNumberInput = document.getElementById('ringNumber');
+
+    let pigeons = JSON.parse(localStorage.getItem('pigeons') || '[]');
+    let editIndex = null;
+    let chart = null;
+
+    function findPigeonByRing(ring) {
+      return pigeons.find(p => p.ringNumber === ring);
+    }
+
+    function getPedigreeLabels(pigeon, generation = 1, labels = [], level = 0) {
+      if (!pigeon || generation > 3) return labels;
+      labels.push(`${'　'.repeat(level)}${pigeon.ringNumber}`);
+      getPedigreeLabels(findPigeonByRing(pigeon.fatherRing), generation + 1, labels, level + 1);
+      getPedigreeLabels(findPigeonByRing(pigeon.motherRing), generation + 1, labels, level + 1);
+      return labels;
+    }
+
+    function showPedigreeChart(pigeon) {
+      const labels = getPedigreeLabels(pigeon);
+      const data = {
+        labels: labels.reverse(),
+        datasets: [{
+          label: '血統層級',
+          data: labels.map((_, i) => i + 1),
+          backgroundColor: 'rgba(0, 123, 255, 0.5)'
+        }]
+      };
+
+      if (chart) chart.destroy();
+      chart = new Chart(pedigreeChartCanvas, {
+        type: 'bar',
+        data: data,
+        options: {
+          indexAxis: 'y',
+          responsive: true,
+          plugins: {
+            legend: { display: false },
+            title: { display: true, text: '三代血統圖示' }
+          }
+        }
+      });
+
+      pedigreeChartCanvas.style.display = 'block';
+    }
+
+    function displayPigeons(filter = '') {
+      pigeonList.innerHTML = '';
+      const lowerFilter = filter.toLowerCase();
+      pigeons.filter(p => {
+        return [
+          p.name, p.ringNumber, p.featherColor, p.eyeColor,
+          p.breed, p.fatherRing, p.motherRing, p.notes
+        ].some(field => (field || '').toLowerCase().includes(lowerFilter));
+      }).forEach((pigeon, index) => {
+        const div = document.createElement('div');
+        div.className = 'pigeon-item';
+        div.innerHTML = `
+          <strong>${pigeon.ringNumber}</strong> (${pigeon.gender})<br>
+          鴿名：${pigeon.name || ''}<br>
+          出生：${pigeon.birthDate}<br>
+          羽色：${pigeon.featherColor || ''}<br>
+          眼色：${pigeon.eyeColor || ''}<br>
+          血統：${pigeon.breed || ''}<br>
+          父鴿號：${pigeon.fatherRing || ''}<br>
+          母鴿號：${pigeon.motherRing || ''}<br>
+          備註：${pigeon.notes || ''}<br>
+          ${pigeon.photo ? `<img src="${pigeon.photo}" class="preview">` : ''}<br>
+          <button class="edit-button" onclick="editPigeon(${index})">編輯</button>
+          <button class="edit-button" onclick="showPedigreeChart(pigeons[${index}])">圖表血統</button>
+          <button class="edit-button" onclick="deletePigeon(${index})">刪除</button>
+        `;
+        pigeonList.appendChild(div);
+      });
+    }
+
+    function editPigeon(index) {
+      const p = pigeons[index];
+      document.getElementById('name').value = p.name || '';
+      ringNumberInput.value = p.ringNumber;
+      ringNumberInput.disabled = true; // 禁止編輯鴿號
+      document.getElementById('gender').value = p.gender;
+      document.getElementById('birthDate').value = p.birthDate;
+      document.getElementById('featherColor').value = p.featherColor;
+      document.getElementById('eyeColor').value = p.eyeColor;
+      document.getElementById('breed').value = p.breed || '';
+      document.getElementById('fatherRing').value = p.fatherRing;
+      document.getElementById('motherRing').value = p.motherRing;
+      document.getElementById('notes').value = p.notes || '';
+      preview.src = p.photo || '';
+      editIndex = index;
+    }
+
+    function deletePigeon(index) {
+      if (confirm('確定要刪除這筆資料嗎？')) {
+        pigeons.splice(index, 1);
+        localStorage.setItem('pigeons', JSON.stringify(pigeons));
+        displayPigeons(searchInput.value);
+      }
+    }
+
+    photoInput.addEventListener('change', () => {
+      const file = photoInput.files[0];
+      if (file) {
+        const reader = new FileReader();
+        reader.onload = e => preview.src = e.target.result;
+        reader.readAsDataURL(file);
+      }
+    });
+
+    form.addEventListener('submit', e => {
+      e.preventDefault();
+      const name = document.getElementById('name').value;
+      const ringNumber = ringNumberInput.value;
+      const gender = document.getElementById('gender').value;
+      const birthDate = document.getElementById('birthDate').value;
+      const featherColor = document.getElementById('featherColor').value;
+      const eyeColor = document.getElementById('eyeColor').value;
+      const breed = document.getElementById('breed').value;
+      const fatherRing = document.getElementById('fatherRing').value;
+      const motherRing = document.getElementById('motherRing').value;
+      const notes = document.getElementById('notes').value;
+      const photo = preview.src || '';
+
+      const pigeonData = { name, ringNumber, gender, birthDate, featherColor, eyeColor, breed, fatherRing, motherRing, notes, photo };
+
+      if (editIndex !== null) {
+        pigeons[editIndex] = pigeonData;
+        editIndex = null;
+      } else {
+        pigeons.push(pigeonData);
+      }
+
+      localStorage.setItem('pigeons', JSON.stringify(pigeons));
+      ringNumberInput.disabled = false; // 讓下一筆可以輸入鴿號
+      form.reset();
+      preview.src = '';
+      displayPigeons(searchInput.value);
+    });
+
+    searchInput.addEventListener('input', () => displayPigeons(searchInput.value));
+
+    function exportToExcel() {
+      if (pigeons.length === 0) {
+        alert("目前沒有資料可匯出");
+        return;
+      }
+
+      const wsData = [
+        ["鴿名", "鴿號", "性別", "出生年份", "羽色", "眼色", "血統", "父鴿號", "母鴿號", "備註"]
+      ];
+
+      pigeons.forEach(p => {
+        wsData.push([
+          p.name || "",
+          p.ringNumber,
+          p.gender,
+          p.birthDate,
+          p.featherColor,
+          p.eyeColor,
+          p.breed || "",
+          p.fatherRing || "",
+          p.motherRing || "",
+          p.notes || ""
+        ]);
+      });
+
+      const wb = XLSX.utils.book_new();
+      const ws = XLSX.utils.aoa_to_sheet(wsData);
+      XLSX.utils.book_append_sheet(wb, ws, "Pigeons");
+      XLSX.writeFile(wb, "鴿舍資料.xlsx");
+    }
+
+    displayPigeons();
+  </script>
+</body>
+</html>
